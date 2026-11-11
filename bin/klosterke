@@ -1,0 +1,102 @@
+#!/bin/sh
+# Alle beheeropdrachten in één script, zodat Docker uit beeld blijft. Draai het in de projectmap:
+#   ./bin/klosterke start | stop | status | herstart | backup | herstel <bestand> | controle | logs [dienst]
+set -eu
+cd "$(dirname "$0")/.."
+
+# Poort: uit de omgeving, anders uit .env (daar zet je HTTP_PORT=80 voor de Pi), anders 8080.
+port() {
+    p=${HTTP_PORT:-$(sed -n 's/^HTTP_PORT=//p' .env 2>/dev/null | tail -1)}
+    echo "${p:-8080}"
+}
+
+# Staat NGROK_AUTHTOKEN in .env, dan hoort de tunnel (openbare URL voor testen op een telefoon) erbij.
+profile() {
+    if grep -qs '^NGROK_AUTHTOKEN=.' .env; then echo "--profile tunnel"; fi
+}
+
+status() {
+    docker compose $(profile) ps
+    echo
+    echo "--- /health ---"
+    # -s: geen voortgang; 503 is geen scriptfout, dus geen -f.
+    curl -s -w '\nHTTP %{http_code}\n' "http://localhost:$(port)/health" || echo "GEEN ANTWOORD"
+}
+
+start() {
+    if [ -z "$(profile)" ]; then
+        echo "Tunnel overgeslagen: zet NGROK_AUTHTOKEN=... in .env om een URL voor je telefoon te krijgen."
+    fi
+    docker compose $(profile) up -d --build
+    sleep 5
+    status
+    if [ -n "$(profile)" ]; then
+        echo
+        echo "--- tunnel ---"
+        url=""
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            url=$(docker compose --profile tunnel logs ngrok 2>/dev/null | grep -o 'url=https://[^ ]*' | tail -1 || true)
+            [ -n "$url" ] && break
+            sleep 2
+        done
+        echo "${url:-Geen URL gevonden: zie ./bin/klosterke logs ngrok}"
+    fi
+}
+
+case "${1:-}" in
+    start)
+        start
+        ;;
+    stop)
+        # Bestellingen en antwoorden blijven bewaard (ze staan in een Docker-volume).
+        docker compose --profile tunnel down
+        ;;
+    status)
+        status
+        ;;
+    herstart)
+        # Na een wijziging in data/*.json of docker/nginx.conf. game-writer leest data/*.json bij het starten opnieuw in.
+        docker compose $(profile) restart
+        sleep 5
+        status
+        ;;
+    backup)
+        # Kopie van de database in ./backups/ (met tijdstempel). Mag tijdens het event.
+        file=$(docker compose exec -T -u www-data php php bin/backup.php)
+        name=$(basename "$file")
+        mkdir -p backups
+        docker compose cp "php:$file" "backups/$name"
+        docker compose exec -T -u www-data php rm "$file"
+        echo "Backup: backups/$name"
+        ;;
+    herstel)
+        # Zet een backup terug. Bestellingen van na de backup gaan verloren.
+        file=${2:-}
+        if [ -z "$file" ] || [ ! -f "$file" ]; then
+            echo "Gebruik: ./bin/klosterke herstel backups/<bestand>.sqlite"
+            exit 1
+        fi
+        dir=$(cd "$(dirname "$file")" && pwd)
+        docker compose --profile tunnel down
+        docker compose run --rm --no-deps -v "$dir:/backups:ro" --entrypoint sh game-writer \
+            -c "rm -f /data/klosterke.sqlite-wal /data/klosterke.sqlite-shm && cp /backups/$(basename "$file") /data/klosterke.sqlite"
+        start
+        ;;
+    controle)
+        # Syntaxcontrole van alle PHP-bestanden VOOR je opnieuw bouwt. Gebruikt het PHP-image dat al op de machine staat (geen internet nodig).
+        if out=$(docker run --rm -v "$PWD":/app:ro -w /app php:8.3-fpm-alpine sh -c \
+            'for f in public/index.php src/*.php bin/*.php; do php -l "$f" || exit 1; done' 2>&1); then
+            echo "Geen syntaxfouten."
+        else
+            echo "$out" | grep -v '^No syntax errors'
+            exit 1
+        fi
+        ;;
+    logs)
+        docker compose --profile tunnel logs --tail 50 ${2:-}
+        ;;
+    *)
+        echo "Gebruik: ./bin/klosterke start | stop | status | herstart | backup | herstel <bestand> | controle | logs [dienst]"
+        exit 1
+        ;;
+esac

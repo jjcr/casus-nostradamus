@@ -1,0 +1,7 @@
+{
+  "ordering_paused": 0,
+  "max_open_orders": 60,
+  "avg_seconds_per_order": 30,
+  "batch_size": 15,
+  "pickup_timeout_seconds": 600
+}

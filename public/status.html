@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status 't Klosterke</title>
+<style>
+  body { margin: 0; font-family: sans-serif; text-align: center; }
+  #banner { padding: 3rem 1rem; font-size: 4rem; font-weight: bold; color: #fff; background: #777; }
+  #banner.ok { background: #1a8f3c; }
+  #banner.fail { background: #c62828; }
+  ul { list-style: none; padding: 0; font-size: 1.5rem; }
+  li { margin: .6rem 0; }
+  li.fail { color: #c62828; font-weight: bold; }
+  #meta { color: #666; }
+</style>
+</head>
+<body>
+<div id="banner">...</div>
+<ul id="checks"></ul>
+<p id="meta"></p>
+
+<script>
+// Pollt /health elke 5 seconden. Groen = alles ok, rood = er is iets mis (de fout staat eronder).
+const banner = document.getElementById('banner');
+const list = document.getElementById('checks');
+const meta = document.getElementById('meta');
+
+function show(ok, text) {
+  banner.className = ok ? 'ok' : 'fail';
+  banner.textContent = text;
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/health', { cache: 'no-store' });
+    const data = await res.json(); // ook bij 503 staat de JSON in de body
+
+    show(data.status === 'ok', data.status === 'ok' ? 'ALLES OK' : 'FOUT');
+    list.replaceChildren();
+    for (const [name, check] of Object.entries(data.checks)) {
+      const li = document.createElement('li');
+      li.className = check.ok ? 'ok' : 'fail';
+      li.textContent = (check.ok ? '✔ ' : '✘ ') + name + ': ' + check.detail;
+      list.appendChild(li);
+    }
+    meta.textContent = 'Laatste controle: ' + data.time;
+  } catch (err) {
+    // Geen (geldig) antwoord = server of nginx is weg
+    show(false, 'GEEN ANTWOORD VAN SERVER');
+    list.replaceChildren();
+    meta.textContent = 'Laatste poging: ' + new Date().toLocaleTimeString();
+  }
+}
+
+poll();
+setInterval(poll, 5000);
+</script>
+</body>
+</html>

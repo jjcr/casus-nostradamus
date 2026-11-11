@@ -1,0 +1,26 @@
+{
+  "starts_at": null,
+  "questions": [
+    {
+      "id": 1,
+      "text": "Wat is de hoofdstad van Zeeland?",
+      "options": ["Middelburg", "Vlissingen", "Goes", "Zierikzee"],
+      "correct_option": 0,
+      "duration_seconds": 300
+    },
+    {
+      "id": 2,
+      "text": "Hoeveel provincies heeft Nederland?",
+      "options": ["10", "12", "14", "16"],
+      "correct_option": 1,
+      "duration_seconds": 300
+    },
+    {
+      "id": 3,
+      "text": "Welke kleur heeft een Zeeuwse knoop niet?",
+      "options": ["Goud", "Zilver", "Blauw", "Paars"],
+      "correct_option": 3,
+      "duration_seconds": 300
+    }
+  ]
+}

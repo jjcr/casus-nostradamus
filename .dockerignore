@@ -1,0 +1,10 @@
+.git
+.env
+backups
+data
+docs
+loadtest
+vendor
+docker-compose.yml
+README.md
+CLAUDE.md

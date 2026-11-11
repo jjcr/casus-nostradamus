@@ -1,0 +1,5 @@
+[
+  { "id": 1, "name": "Rode Wijn", "coins": 1, "stock": 150, "available": true },
+  { "id": 2, "name": "Witte Wijn", "coins": 1, "stock": 150, "available": true },
+  { "id": 3, "name": "Kloosterbier", "coins": 1, "stock": 400, "available": true }
+]

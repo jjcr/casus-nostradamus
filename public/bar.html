@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bar 't Klosterke</title>
+<style>
+  body { margin: 0; padding: 1rem; font-family: sans-serif; background: #1b1b1f; color: #fff; }
+  h1, h2 { margin: .5rem 0; }
+  #status { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; font-size: 1.5rem; }
+  #pause { font-size: 1.5rem; padding: .6rem 1.2rem; border: 0; border-radius: .5rem; color: #fff; }
+  #pause.running { background: #c62828; }
+  #pause.paused { background: #1a8f3c; }
+  #error { display: none; background: #c62828; padding: .6rem 1rem; font-size: 1.5rem; margin: .5rem 0; }
+  #batch { margin: 1rem 0; padding: 1rem; background: #2a2a31; border-radius: .5rem; }
+  #range { font-size: 1.5rem; color: #ffca28; }
+  #tap div { font-size: 3.5rem; font-weight: bold; margin: .3rem 0; }
+  #ready { width: 100%; font-size: 3rem; padding: 1.2rem; border: 0; border-radius: .5rem; background: #1a8f3c; color: #fff; }
+  #ready:disabled { background: #444; }
+  #stock div { font-size: 1.3rem; margin: .3rem 0; }
+</style>
+</head>
+<body>
+<h1>Bar</h1>
+<div id="status">
+  <span id="open"></span>
+  <span id="wait"></span>
+  <button id="pause" class="running">Bestellen pauzeren</button>
+</div>
+<div id="error"></div>
+
+<div id="batch">
+  <h2>Volgende batch</h2>
+  <div id="range"></div>
+  <div id="tap"></div>
+  <button id="ready" disabled>KLAAR</button>
+</div>
+
+<h2>Voorraad</h2>
+<div id="stock"></div>
+
+<script>
+// Pollt /bar/batch elke 3 seconden. Eén tik op KLAAR zet precies de getoonde orders klaar.
+const el = id => document.getElementById(id);
+let current = null; // laatste antwoord van de server
+
+async function call(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+}
+
+function showError(message) {
+  el('error').textContent = message;
+  el('error').style.display = message ? 'block' : 'none';
+}
+
+function render(data) {
+  current = data;
+  el('open').textContent = data.open_orders + ' openstaand';
+  el('wait').textContent = 'wachttijd ± ' + data.estimated_wait_minutes + ' min';
+  el('pause').className = data.ordering_paused ? 'paused' : 'running';
+  el('pause').textContent = data.ordering_paused ? 'Bestellen weer aanzetten' : 'Bestellen pauzeren';
+
+  const batch = data.batch;
+  el('ready').disabled = !batch;
+  el('range').textContent = batch
+    ? 'order ' + batch.first_order + ' t/m ' + batch.last_order + ' (' + batch.order_ids.length + ' orders)'
+    : 'Geen openstaande orders';
+  el('tap').replaceChildren(...(batch ? batch.products : []).map(p => {
+    const div = document.createElement('div');
+    div.textContent = p.quantity + '× ' + p.name;
+    return div;
+  }));
+
+  el('stock').replaceChildren(...data.stock.map(p => {
+    const div = document.createElement('div');
+    div.textContent = p.name + ': ' + p.stock + (p.available ? '' : ' (niet beschikbaar)');
+    return div;
+  }));
+}
+
+async function poll() {
+  try {
+    render(await call('GET', '/bar/batch'));
+    showError('');
+  } catch (err) {
+    showError('Geen verbinding met de server');
+  }
+}
+
+async function act(method, path, body) {
+  try {
+    await call(method, path, body);
+  } catch (err) {
+    showError('Geen verbinding met de server');
+  }
+  poll();
+}
+
+// De ids van het scherm sturen (niet "de volgende batch"): wat Paul ziet is wat klaar gaat.
+el('ready').onclick = () => { el('ready').disabled = true; act('POST', '/bar/ready', { order_ids: current.batch.order_ids }); };
+el('pause').onclick = () => act('POST', '/bar/pause', { paused: !current.ordering_paused });
+
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>

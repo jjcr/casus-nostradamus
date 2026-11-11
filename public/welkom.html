@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welkom - 't Klosterke</title>
+<style>
+  body { margin: 0; padding: 1rem; font-family: sans-serif; max-width: 30rem; margin-inline: auto; text-align: center; }
+  h1 { margin: 1.5rem 0 1rem; }
+  #jij { margin: 0 0 .5rem; font-size: 1.2rem; font-weight: bold; }
+  #info { margin: 0 0 1.5rem; font-size: 1.1rem; color: #444; }
+  #info p { margin: .3rem 0; }
+  a.big { display: block; padding: 1.4rem 1rem; margin-top: 1rem; border-radius: .6rem; font-size: 1.6rem; font-weight: bold;
+          text-decoration: none; color: #fff; background: #1a8f3c; }
+  a.quiz { background: #5c4ccf; }
+</style>
+</head>
+<body>
+<h1>Welkom bij 't Klosterke</h1>
+<p id="jij"></p>
+<div id="info"></div>
+<a class="big" href="/order.html">Bestellen</a>
+<a class="big quiz" href="/scores.html">Quiz en tussenstand</a>
+
+<script src="/bezoeker.js"></script>
+<script>
+// Laat zien wat een bezoeker wil weten voor hij kiest: hoe druk is de bar, loopt de quiz. Pollt /game elke 5 s.
+const info = document.getElementById('info');
+// Dit is de naam die op het scorebord in de zaal staat; zo herken je jezelf.
+document.getElementById('jij').textContent = 'Jij bent: ' + bijnaam(bezoekerId());
+
+function line(text) {
+  const p = document.createElement('p');
+  p.textContent = text;
+  return p;
+}
+
+async function poll() {
+  try {
+    const game = await (await fetch('/game', { cache: 'no-store' })).json();
+    info.replaceChildren(
+      line(game.ordering_paused
+        ? 'Bestellen staat even uit.'
+        : 'Wachttijd bij de bar: ongeveer ' + game.estimated_wait_minutes + ' min.'),
+      line(game.question ? 'De quiz loopt: er staat een vraag open.' : 'Er staat nu geen quizvraag open.'),
+    );
+  } catch (e) {
+    info.replaceChildren(line('Geen verbinding. We blijven proberen.'));
+  }
+}
+
+poll();
+setInterval(poll, 5000);
+</script>
+</body>
+</html>

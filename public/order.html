@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bestellen - 't Klosterke</title>
+<style>
+  body { margin: 0; padding: 1rem; font-family: sans-serif; max-width: 30rem; margin-inline: auto; }
+  .note { display: none; padding: .8rem 1rem; border-radius: .5rem; margin-bottom: 1rem; font-weight: bold; background: #ffe0b2; }
+  .product { display: flex; align-items: center; justify-content: space-between; padding: .7rem 0; border-bottom: 1px solid #ddd; font-size: 1.2rem; }
+  .product button { width: 3rem; height: 3rem; font-size: 1.5rem; }
+  input { width: 100%; box-sizing: border-box; font-size: 1.1rem; padding: .6rem; }
+  #send { width: 100%; font-size: 1.4rem; padding: 1rem; margin-top: 1rem; border: 0; border-radius: .5rem; background: #1a8f3c; color: #fff; }
+  #send:disabled { background: #aaa; }
+  #jij { margin: -.5rem 0 1rem; color: #555; }
+  .order { padding: .8rem; margin-top: .8rem; border-radius: .5rem; background: #f1f1f1; font-size: 1.1rem; }
+  .order.ready { background: #c8e6c9; font-weight: bold; }
+  .order.expired { background: #ffe0b2; }
+</style>
+</head>
+<body>
+<h1>Bestellen</h1>
+<div id="jij"></div>
+<div id="paused" class="note">Bestellen staat even uit. Probeer zo opnieuw.</div>
+<div id="message" class="note"></div>
+<div id="products"></div>
+
+<p><input id="group" placeholder="Afkoopcode (alleen met bandje)" autocomplete="off" autocapitalize="characters"></p>
+<div id="total"></div>
+<button id="send" disabled>Bestel</button>
+<div id="orders"></div>
+
+<script src="/bezoeker.js"></script>
+<script>
+// Bestelpagina. Praat met GET /game (producten, pauze, klare orders; elke 5 s) en POST /order/new.
+//
+// Veilig opnieuw proberen: de bestelling krijgt één idempotency_key die in localStorage blijft staan tot
+// de server antwoordt. Bij een netwerkfout, herladen of 503 sturen we dezelfde key opnieuw: de server
+// maakt nooit een tweede bestelling.
+
+const MAX_ITEMS = 4; // stuks per bestelling, zelfde regel als de server
+const el = id => document.getElementById(id);
+const munten = n => n + (n === 1 ? ' munt' : ' munten');
+
+// store, uuid, bezoekerId en bijnaam komen uit /bezoeker.js.
+const visitorId = bezoekerId();
+el('jij').textContent = 'Jij bent: ' + bijnaam(visitorId);
+
+let game = null;                          // laatste antwoord van /game
+let counts = {};                          // product_id -> aantal in het mandje
+let pending = store.get('pending', null); // bestelling zonder antwoord: { key, items, group_code }
+// eigen bestellingen: [{ id, lines: [{ name, quantity }] }]; oudere opslag had alleen het nummer
+let orders = store.get('orders', []).map(o => (typeof o === 'object' ? o : { id: o, lines: [] }));
+let sending = false;
+
+function say(text) {
+  el('message').textContent = text;
+  el('message').style.display = text ? 'block' : 'none';
+}
+
+function render() {
+  if (!game) return;
+  el('paused').style.display = game.ordering_paused ? 'block' : 'none';
+
+  el('products').replaceChildren(...game.products.map(p => {
+    const row = document.createElement('div');
+    row.className = 'product';
+    const name = document.createElement('span');
+    name.textContent = p.name + ' (' + munten(p.coins) + ')' + (p.available ? '' : ' uitverkocht');
+    const minus = document.createElement('button');
+    minus.textContent = '−';
+    minus.onclick = () => change(p.id, -1);
+    const plus = document.createElement('button');
+    plus.textContent = '+';
+    plus.disabled = !p.available;
+    plus.onclick = () => change(p.id, 1);
+    const n = document.createElement('b');
+    n.textContent = counts[p.id] || 0;
+    row.append(name, minus, n, plus);
+    return row;
+  }));
+
+  const stuks = Object.values(counts).reduce((a, b) => a + b, 0);
+  const total = game.products.reduce((sum, p) => sum + p.coins * (counts[p.id] || 0), 0);
+  el('total').textContent = stuks + ' van max ' + MAX_ITEMS + ' stuks, totaal ' + munten(total) + ' (betaal aan de bar)';
+  el('send').disabled = sending || stuks === 0 || game.ordering_paused;
+
+  el('orders').replaceChildren(...orders.slice().reverse().map(o => {
+    const div = document.createElement('div');
+    const ready = game.ready_orders.includes(o.id);
+    const expired = !ready && (game.expired_orders || []).includes(o.id);
+    div.className = 'order' + (ready ? ' ready' : expired ? ' expired' : '');
+    const status = document.createElement('div');
+    status.textContent = ready
+      ? 'Order ' + o.id + ' staat klaar! Haal hem op bij de afhaaltafel.'
+      : expired
+        ? 'Order ' + o.id + ' is niet opgehaald en vervallen. Bestel opnieuw of vraag het aan de bar.'
+        : 'Order ' + o.id + ' wordt gemaakt. Wachttijd ongeveer ' + game.estimated_wait_minutes + ' min.';
+    div.append(status);
+    if (o.lines.length) {
+      const what = document.createElement('div');
+      what.textContent = o.lines.map(l => l.quantity + '× ' + l.name).join(', ');
+      div.append(what);
+    }
+    return div;
+  }));
+}
+
+// Leesbare regels van een bestelling, met de productnaam zoals die nu in /game staat.
+function describe(items) {
+  return items.map(i => {
+    const p = game.products.find(p => p.id === i.product_id);
+    return { name: p ? p.name : 'product ' + i.product_id, quantity: i.quantity };
+  });
+}
+
+function change(productId, delta) {
+  const stuks = Object.values(counts).reduce((a, b) => a + b, 0);
+  const next = (counts[productId] || 0) + delta;
+  if (next < 0 || (delta > 0 && stuks >= MAX_ITEMS)) return;
+  counts[productId] = next;
+  render();
+}
+
+async function poll() {
+  try {
+    game = await (await fetch('/game', { cache: 'no-store' })).json();
+    render();
+  } catch (e) {
+    say('Geen verbinding. We blijven proberen.');
+  }
+}
+
+// Stuurt `pending`. Blijft dezelfde key gebruiken tot de server antwoordt.
+async function submit() {
+  sending = true;
+  render();
+  let retryAfter = 0; // seconden; 0 = klaar
+
+  try {
+    const res = await fetch('/order/new', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idempotency_key: pending.key, visitor_id: visitorId, group_code: pending.group_code, items: pending.items }),
+    });
+    const data = await res.json();
+
+    if (res.status === 201 || res.status === 200) {
+      const lines = describe(pending.items);
+      orders.push({ id: data.order_id, lines });
+      store.set('orders', orders);
+      pending = null;
+      counts = {};
+      say('Besteld! Order ' + data.order_id + ': ' + lines.map(l => l.quantity + '× ' + l.name).join(', ')
+        + (data.total_coins === 0 ? ' (afkoop)' : ', ' + munten(data.total_coins)) + '.');
+    } else if (res.status === 503) {
+      retryAfter = data.retry_after || 15; // bar druk of pauze: zelfde key opnieuw
+      say((data.message || 'De bar is druk.') + ' We proberen het over ' + retryAfter + ' s opnieuw.');
+    } else {
+      pending = null; // geweigerd (uitverkocht, te veel orders, ...): een nieuwe poging krijgt een nieuwe key
+      say(data.message || 'Bestelling mislukt.');
+    }
+  } catch (e) {
+    retryAfter = 3; // onbekend of de bestelling is aangekomen: dezelfde key is veilig
+    say('Geen verbinding. We proberen het zo opnieuw.');
+  }
+
+  store.set('pending', pending);
+  sending = false;
+  if (retryAfter > 0) setTimeout(submit, retryAfter * 1000);
+  render();
+}
+
+el('send').onclick = () => {
+  const items = Object.entries(counts).filter(([, n]) => n > 0).map(([id, n]) => ({ product_id: Number(id), quantity: n }));
+  const group = el('group').value.trim();
+  pending = { key: uuid(), items, group_code: group === '' ? null : group };
+  store.set('pending', pending);
+  submit();
+};
+
+poll().then(() => { if (pending) submit(); }); // na herladen: eerst afmaken, met dezelfde key
+setInterval(poll, 5000); // 1200 telefoons × 1 verzoek per 5 s ≈ 240 req/s; zie docs/measurement.md
+</script>
+</body>
+</html>

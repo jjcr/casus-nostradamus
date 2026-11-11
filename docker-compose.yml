@@ -1,0 +1,131 @@
+# 't Klosterke event server. Start: docker compose up
+#
+# CPU/geheugen-limieten staan hier zodat de meting op een laptop lijkt op de Pi 3B
+# (4 cores, 1 GB). Zie README voor APP_CPUS / APP_CPUSET / K6_CPUSET.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-php: &php
+  build:
+    context: .
+    dockerfile: docker/php.Dockerfile
+    target: app
+  image: klosterke-php
+  restart: unless-stopped
+  logging: *logging
+  environment: &php-env
+    DB_PATH: /data/klosterke.sqlite
+    GAME_JSON: /runtime/game.json
+    EVENT_DATE_MIN: ${EVENT_DATE_MIN:-2026-01-01}
+    MIN_FREE_MB: ${MIN_FREE_MB:-500}
+
+services:
+  # PHP-FPM: /health en POST /order/new
+  php:
+    <<: *php
+    depends_on:
+      game-writer:
+        condition: service_healthy   # schema staat er pas als game-writer gezaaid heeft
+    volumes:
+      - data:/data
+      - runtime:/runtime:ro
+    cpus: ${APP_CPUS:-4}
+    cpuset: "${APP_CPUSET:-}"
+    mem_limit: 704m
+
+  # Eerst schema + data/*.json inlezen (idempotent, bin/seed.php), dan elke seconde /runtime/game.json
+  # schrijven (nginx serveert dat als GET /game).
+  game-writer:
+    <<: *php
+    user: www-data
+    init: true
+    command: ["sh", "-c", "php bin/seed.php && exec php bin/game-writer.php"]
+    healthcheck:
+      test: ["CMD", "test", "-f", "/runtime/game.json"]
+      interval: 2s
+      retries: 60
+    volumes:
+      - data:/data
+      - runtime:/runtime
+      - ./data:/var/www/html/data:ro   # producten en vragen: JSON bewerken, geen rebuild nodig
+    cpus: ${APP_CPUS:-4}
+    cpuset: "${APP_CPUSET:-}"
+    mem_limit: 128m
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      - php
+      - game-writer
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./public:/var/www/html/public:ro
+      - runtime:/runtime:ro
+    cpus: ${APP_CPUS:-4}
+    cpuset: "${APP_CPUSET:-}"
+    mem_limit: 128m
+
+  # --- Tunnel (alleen met --profile tunnel) -----------------------------------
+  # Maakt order.html, scores.html, /game en /order/new bereikbaar via een openbare https-URL (voor testen op
+  # een telefoon buiten het wifi). Zet NGROK_AUTHTOKEN in .env. URL: docker compose logs ngrok | grep url=
+  # bin/klosterke start dit vanzelf als NGROK_AUTHTOKEN in .env staat. Niet voor het event zelf (geen internet).
+  ngrok:
+    profiles: ["tunnel"]
+    image: ngrok/ngrok:3
+    restart: unless-stopped
+    depends_on:
+      - nginx
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    command: ["http", "nginx:8081", "--log", "stdout"]
+
+  # --- Specs (alleen met --profile test) --------------------------------------
+  # docker compose --profile test run --rm --build test
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: docker/php.Dockerfile
+      target: test
+    image: klosterke-test
+
+  # --- Meting (alleen met --profile loadtest) ---------------------------------
+
+  k6:
+    profiles: ["loadtest"]
+    image: grafana/k6:0.49.0
+    depends_on:
+      - nginx
+    environment:
+      BASE_URL: http://nginx
+      TARGET_RPS: ${TARGET_RPS:-3500}
+      HOLD_SECONDS: ${HOLD_SECONDS:-120}
+    cpuset: "${K6_CPUSET:-}"
+    volumes:
+      - ./loadtest:/loadtest:ro
+    command: ["run", "--summary-trend-stats=avg,med,p(90),p(95),p(99),max", "/loadtest/k6.js"]
+
+  calibrate:
+    profiles: ["loadtest"]
+    build:
+      context: .
+      dockerfile: docker/php.Dockerfile
+      target: tools
+    image: klosterke-tools
+    environment:
+      PI3_EVENTS_PER_SEC_LOW: ${PI3_EVENTS_PER_SEC_LOW:-}
+      PI3_EVENTS_PER_SEC_HIGH: ${PI3_EVENTS_PER_SEC_HIGH:-}
+    cpuset: "${CALIBRATE_CPUSET:-}"
+    command: ["php", "bin/calibrate.php"]
+
+volumes:
+  data:
+  runtime:

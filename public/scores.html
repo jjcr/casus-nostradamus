@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quiz 't Klosterke</title>
+<style>
+  body { margin: 0; padding: 2rem; font-family: sans-serif; background: #1b1b1f; color: #fff; }
+  h1 { font-size: 3rem; margin: 0 0 1rem; }
+  #question { font-size: 2.5rem; margin-bottom: .5rem; }
+  #options { font-size: 2rem; margin: 0 0 1rem; padding-left: 2.5rem; }
+  #timer { font-size: 4rem; font-weight: bold; color: #ffca28; }
+  table { border-collapse: collapse; font-size: 2rem; margin-top: 1rem; }
+  td { padding: .3rem 1.5rem .3rem 0; }
+</style>
+</head>
+<body>
+<h1>Quiz</h1>
+<div id="question"></div>
+<ol id="options" type="A"></ol>
+<div id="timer"></div>
+<h1>Tussenstand</h1>
+<table id="scores"></table>
+
+<script src="/bezoeker.js"></script>
+<script>
+// Pollt /game elke seconde. Tussen twee polls telt de browser zelf af (alleen weergave:
+// de server bepaalt of een antwoord nog binnen de tijd valt).
+const el = id => document.getElementById(id);
+let deadline = 0; // browser-tijd (ms) waarop de vraag sluit
+
+function renderTimer() {
+  const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  el('timer').textContent = deadline > 0 ? left + ' s' : '';
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/game', { cache: 'no-store' });
+    const game = await res.json();
+
+    if (game.question) {
+      el('question').textContent = game.question.text;
+      el('options').replaceChildren(...game.question.options.map(text => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        return li;
+      }));
+      deadline = Date.now() + game.remaining_seconds * 1000;
+    } else {
+      el('question').textContent = 'Geen vraag open';
+      el('options').replaceChildren();
+      deadline = 0;
+    }
+    renderTimer();
+
+    el('scores').replaceChildren(...game.scores.map((row, i) => {
+      const tr = document.createElement('tr');
+      for (const text of [i + 1 + '.', bijnaam(row.visitor_id), row.score]) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        tr.appendChild(td);
+      }
+      return tr;
+    }));
+  } catch (err) {
+    // Netwerkfout of half antwoord: scherm laat laatste stand staan, volgende poll probeert opnieuw
+  }
+}
+
+poll();
+setInterval(poll, 1000);
+setInterval(renderTimer, 250);
+</script>
+</body>
+</html>

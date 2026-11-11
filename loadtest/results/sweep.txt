@@ -1,0 +1,18 @@
+cores_tot cpu_per_ct aanbod    uitslag  game_95pct     order_95pct    fouten   dropped
+4        4          3500      GEHAALD  652.74µs      26.42ms        0.00%    0
+>> 4 cores: hoogste gehaalde aanbod = 3500 req/s
+2        2          3500      GEHAALD  557.14µs      14.79ms        0.00%    0
+>> 2 cores: hoogste gehaalde aanbod = 3500 req/s
+1        1          3500      GEHAALD  6.27ms         140.9ms        0.00%    0
+>> 1 cores: hoogste gehaalde aanbod = 3500 req/s
+0.57     0.29       3500      GEFAALD  148.76ms       10.38s         0.00%    18705
+0.57     0.29       2500      GEFAALD  169.55ms       1.91s          0.00%    1936
+0.57     0.29       1700      GEHAALD  37.39ms        347.32ms       0.00%    0
+>> 0.57 cores: hoogste gehaalde aanbod = 1700 req/s
+0.07     0.04       1700      GEFAALD  13.47s         55.49s         4.50%    81079
+0.07     0.04       1200      GEFAALD  13.31s         51.17s         3.81%    44366
+0.07     0.04       800       GEFAALD  10.29s         43.13s         3.42%    17761
+0.07     0.04       500       GEFAALD  2.64s          33.5s          0.33%    2269
+0.07     0.04       300       GEFAALD  496.77ms       2.79s          0.00%    0
+0.07     0.04       200       GEHAALD  41.06ms        141.27ms       0.00%    0
+>> 0.07 cores: hoogste gehaalde aanbod = 200 req/s
